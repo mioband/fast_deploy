@@ -16,6 +16,7 @@
  *fast_deploy/desktop_app/redistributable/install/miobands_beta_installer_windows.exe*
  2. Следовать инструкциям по установке
  3. Запустить приложение с рабочего стола
+ 
 ***Вариант 2. Запуск .exe файла напрямую***
 Также если нет необходимости или возможности пользоваться установщиком, предсобранное приложение для Windows можно запустить из файла 
 *fast_deploy/desktop_app/redistributable/dist/main/Miobands Beta 0.7.exe*
