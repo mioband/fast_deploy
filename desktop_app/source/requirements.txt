@@ -1,0 +1,6 @@
+pynput
+PyQt6
+pyserial
+
+pypiwin32
+pywin32

@@ -1,0 +1,51 @@
+{
+  "common_settings": {
+    "armband_modes": [
+      "mouse",
+      "hotkeys",
+      "tv",
+      "copter",
+      "car",
+      "dog"
+    ],
+    "available_bindings": [
+      "w",
+      "a",
+      "s",
+      "d",
+      "e",
+      "space",
+      "shift",
+      "left_click",
+      "right_click",
+      "mousewheel_up",
+      "mousewheel_down"
+    ]
+  },
+  "armbands": [
+    {
+      "id": "2",
+      "enabled": true,
+      "arm": "left",
+      "mode": "mouse",
+      "bindings": {
+        "gesture_1": "left_click",
+        "gesture_2": "left_click"
+      }
+    },
+    {
+      "id": "3",
+      "enabled": false,
+      "arm": "right",
+      "mode": "mouse",
+      "bindings": {
+        "gesture_1": "left_click",
+        "gesture_2": "left_click"
+      }
+    }
+  ],
+  "usb_device": {
+    "mode": "app",
+    "serial_port": "COM5"
+  }
+}
