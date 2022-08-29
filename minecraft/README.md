@@ -1,0 +1,1 @@
+https://nightly.link/UltimMC/Launcher/workflows/main/main/mmc-cracked-win32
