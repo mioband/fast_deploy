@@ -36,7 +36,7 @@ int sensors[6]; // - array for saving sensors signal values
 struct_message myData; // structure for transmitting with esp_now
 charge_state_msg charge = {2, 0};
 unsigned long ground_zeros = 0;
-volatile uint8_t gesture_mode = 1;
+volatile uint8_t gesture_mode = 0;
 esp_now_peer_info_t peerInfo; // creating peer interface
 uint8_t broadcastAddress_pc[] = {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xF4};
 /*1 версия приемника: {0x80, 0x7D, 0x3A, 0x99, 0x85, 0x14}
