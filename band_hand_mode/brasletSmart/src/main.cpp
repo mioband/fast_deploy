@@ -1,29 +1,9 @@
 #include <Arduino.h>
 #include <esp_now.h>
 #include <WiFi.h>
+#include <EEPROM.h>
 #include "MPU9250.h"
 #include "config.hpp"
-
-
-void init_wireless_connection(void);
-void init_base_pins(void);
-void enable_supply(void);
-void sleep_mode_stuff(void);
-void init_serials(void);
-void get_signals();
-void send_data(uint8_t * addr_ptr);
-void gesture_recognizing(void);
-void set_all_signal_coeff(uint8_t unit_val);
-void set_signal_coefficient(uint8_t cell_addr, uint8_t value);
-uint8_t get_charge(void);
-void inform_about_charge(void);
-#ifdef MPU_ON
-void mpu_init(void);
-void mpu_data_processing(void);
-void mpu_get_all_data(void);
-void mpu_get_print_accelerations(void);
-void mpu_get_roll_pitch_angles(void);
-#endif
 
 
 #ifdef MPU_ON
@@ -34,9 +14,12 @@ bool uart_flag = false;
 int sensors[6]; // - array for saving sensors signal values
 
 struct_message myData; // structure for transmitting with esp_now
-charge_state_msg charge = {2, 0};
+charge_state_msg charge = {DEVICE_ID, 0};
 unsigned long ground_zeros = 0;
-volatile uint8_t gesture_mode = 0;
+volatile uint8_t bracelet_mode = 0;
+volatile uint8_t gesture_mode = 1;
+volatile bool is_pressed = false;
+unsigned long switch_off_start_time = millis();
 esp_now_peer_info_t peerInfo; // creating peer interface
 uint8_t broadcastAddress_pc[] = {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xF4};
 /*1 версия приемника: {0x80, 0x7D, 0x3A, 0x99, 0x85, 0x14}
@@ -44,6 +27,7 @@ uint8_t broadcastAddress_pc[] = {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xF4};
   2 версия приемника (в корпусе): {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xF4}
   машинка: {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xEC}
 */
+uint8_t broadcastAddress_car[] = {0x30, 0xC6, 0xF7, 0xB0, 0xF6, 0xEC}; // car's ESP MAC-address
 
 
 void setup() {
@@ -52,40 +36,32 @@ void setup() {
 #endif
     setCpuFrequencyMhz(80);
     init_serials();
-    init_wireless_connection();
+    read_last_state();
     init_base_pins();
-#if defined(DEEP_SLEEP_MODE_ON)
-    sleep_mode_stuff();
-#endif
+    init_wireless_connection();
 #if defined(MPU_ON)
     mpu_init();
 #endif
     set_all_signal_coeff(30);
     delay(1000);
+#ifdef WIFI_OFF_TEST
+    WiFi.mode(WIFI_OFF);
+#endif
     ground_zeros = millis();
 }
 
 
 void loop() {
-#ifdef DEEP_SLEEP_MODE_ON
-    if (!digitalRead(WKUP)) {
-        digitalWrite(RX_1_LED, 0);
-        digitalWrite(RX_3_LED, 0);
-        digitalWrite(RX_4_LED, 0);
-        delay(500);
-        Serial.println("Enter in the sleep mode");
-        esp_deep_sleep_start();
-    }
-#endif
-
+    change_mode_by_button();
+    check_switch_off_by_button();
 #if !defined(TEST_SIGNALS_READING) && !defined(MPU_TESTING) && defined(MPU_ON)
     /* MAIN */
     inform_about_charge();
     get_signals();
-    send_data(broadcastAddress_pc);
+    state_machine();
 #elif defined(MPU_TESTING)
-    mpu_get_all_data();
-    // mpu_get_print_accelerations();
+    // mpu_get_all_data();
+    mpu_get_print_accelerations();
     // mpu_get_roll_pitch_angles();
 #elif defined(ANALOG_SIGNALS_PRINTING)
     Serial.print("Voltage: ");
@@ -123,40 +99,58 @@ void init_serials(void) {
     while (!Serial2);
 }
 
-void sleep_mode_stuff(void) {
-    switch (esp_sleep_enable_ext0_wakeup(WKUP, 0)) { // enable pin WKUP to exit ESP32 from sleep mode
-        case ESP_OK:
-            Serial.println("Sleep mode is configured successfully");
-            break;
-        case ESP_ERR_INVALID_ARG:
-            Serial.println("Error, something is wrong.");
-            break;
-    }
+void WiFi_enable(void) {
+    WiFi.mode(WIFI_STA);
+
+    // Init ESP-NOW
+    if (esp_now_init() != ESP_OK) error_clbck();
+
+    memcpy(peerInfo.peer_addr, broadcastAddress_pc, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) error_clbck();
+
+    memcpy(peerInfo.peer_addr, broadcastAddress_car, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) error_clbck();
+
+    if (WiFi.setTxPower(WIFI_POWER_2dBm) != 1) error_clbck();
+    WiFi.disconnect();
 }
 
 void init_wireless_connection(void) {
     myData.id = DEVICE_ID;
-    // Set device as a Wi-Fi Station
-    WiFi.mode(WIFI_STA);
-
-    // Init ESP-NOW
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("Error initializing ESP-NOW");
-        while(1);
-    }
-
-    peerInfo.channel = 0;
-    peerInfo.encrypt = false;
-
-    memcpy(peerInfo.peer_addr, broadcastAddress_pc, 6);
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        Serial.println("Failed to add peer");
-        while(1);
-    }
-
+    WiFi_enable();
     Serial.println("Device is ready");
     delay(100);
-    WiFi.setSleep(true);
+}
+
+void change_mode_by_button(void) {
+    if (!digitalRead(WKUP)) {
+        digitalWrite(RX_1_LED, bracelet_mode);
+        delay(1000);
+        bracelet_mode = (bracelet_mode) ? 0 : 1;
+        EEPROM.write(0, bracelet_mode);
+        EEPROM.commit();
+    }
+}
+
+void check_switch_off_by_button(void) {
+    if (!digitalRead(MC_DIN)) {
+        if (!is_pressed) {
+            is_pressed = true;
+            switch_off_start_time = millis();
+        } else {
+            unsigned long current_time = millis();
+            if (switch_off_start_time > current_time) {
+                current_time += (0xFFFFFFFF - switch_off_start_time);
+                switch_off_start_time = 0;
+            }
+            
+            if (current_time - switch_off_start_time >= SWITCH_OFF_TIME) {
+                esp_deep_sleep_start();
+            }
+        }
+    } else if (is_pressed) {
+        is_pressed = false;
+    }
 }
 
 void set_signal_coefficient(uint8_t cell_addr, uint8_t value) {
@@ -183,15 +177,13 @@ void set_all_signal_coeff(uint8_t unit_val) {
 }
 
 void get_signals(void) {
-    if (Serial2.available()) {
-        if (Serial2.read() == 'S') {
-            uart_flag = true;
-            Serial2.readBytes(serial_buf, BYTES_TO_READ);
-            uint8_t tmp_count = 0;
-            for (uint8_t i = 0; i < 6; i++) {
-                sensors[i] = serial_buf[tmp_count] | (serial_buf[tmp_count+1] << 8);
-                tmp_count += 2;
-            }
+    if (Serial2.read() == 'S') {
+        uart_flag = true;
+        Serial2.readBytes(serial_buf, BYTES_TO_READ);
+        uint8_t tmp_count = 0;
+        for (uint8_t i = 0; i < 6; i++) {
+            sensors[i] = serial_buf[tmp_count] | (serial_buf[tmp_count+1] << 8);
+            tmp_count += 2;
         }
     }
 }
@@ -199,14 +191,19 @@ void get_signals(void) {
 void send_data(uint8_t *addr_ptr) {
     if (uart_flag) {
         uart_flag = false;
+#if (DEVICE_ID == 3)
         gesture_recognizing();
+#endif
 #ifdef MPU_ON
         mpu_data_processing();
 #endif
-        WiFi.setSleep(false);
-        delay(5);
+#ifdef WIFI_OFF_TEST
+        WiFi_enable();
+#endif
         esp_now_send(addr_ptr, (uint8_t *)&myData, sizeof(myData));
-        WiFi.setSleep(true);
+#ifdef WIFI_OFF_TEST
+        WiFi.mode(WIFI_OFF);
+#endif
     }
 }
 
@@ -220,7 +217,7 @@ void gesture_recognizing(void) {
             }
             break;
         case 1:
-            if (1600 <= sensors[1]) {
+            if (2000 <= sensors[4]) {
                 myData.w = 1; // есть жест
             } else {
                 myData.w = 0; // расслабленная рука
@@ -244,12 +241,34 @@ void init_base_pins(void) {
     digitalWrite(RX_4_LED, 1);
 #endif
     pinMode(ENABLE, OUTPUT);
+    pinMode(MC_DIN, INPUT);
     digitalWrite(ENABLE, 1);
     pinMode(ON_VOLTAGE_MEAS, OUTPUT);
     pinMode(IN_VOLTAGE, ANALOG);
     pinMode(TERM, ANALOG);
 }
 
+void read_last_state(void) {
+    EEPROM.begin(EEPROM_SIZE);
+    bracelet_mode = EEPROM.read(0);
+    if (bracelet_mode == 1) {
+        digitalWrite(RX_1_LED, 0);
+    } else {
+        digitalWrite(RX_1_LED, 1);
+        bracelet_mode = 0;
+    }
+}
+
+void state_machine(void) {
+    switch (bracelet_mode) {
+        case 0:
+            send_data(broadcastAddress_pc);
+            break;
+        case 1:
+            send_data(broadcastAddress_car);
+            break;
+    }
+}
 
 /* calculating percentage of the charge */
 uint8_t get_charge(void) {
@@ -271,11 +290,28 @@ void inform_about_charge(void) {
 
     if (current_ticks - ground_zeros >= CHARGE_INFO_TIME) {
         charge.val = get_charge();
-        WiFi.setSleep(false);
-        delay(5);
+#ifdef WIFI_OFF_TEST
+        WiFi_enable();
+#endif
         esp_now_send(broadcastAddress_pc, (uint8_t *)&charge, sizeof(charge));
-        WiFi.setSleep(true);
+#ifdef WIFI_OFF_TEST
+        WiFi.mode(WIFI_OFF);
+#endif
         ground_zeros = millis();
+    }
+}
+
+void error_clbck(void) {
+    while (1) {
+        digitalWrite(RX_1_LED, 0);
+        digitalWrite(RX_3_LED, 0);
+        digitalWrite(RX_4_LED, 0);
+        delay(250);
+        digitalWrite(RX_1_LED, 1);
+        digitalWrite(RX_3_LED, 1);
+        digitalWrite(RX_4_LED, 1);
+        delay(250);
+        if (!digitalRead(WKUP)) esp_deep_sleep_start();
     }
 }
 
