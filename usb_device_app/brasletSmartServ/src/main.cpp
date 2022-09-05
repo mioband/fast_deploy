@@ -79,9 +79,11 @@ void init_esp_now(void) {
 
 // callback function that will be executed when data is received
 void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
-    if ((len == 2) && ((*incomingData) == 2)) {
-        Serial.print(*(++incomingData));
-        Serial.println('\%');
+    if (len == 2) {
+        Serial.print('\%');
+        Serial.print(*incomingData);
+        Serial.print(',');
+        Serial.println(*(++incomingData));
     } else {
         memcpy(&myData, incomingData, sizeof(myData));
         buff_char[0] = myData.x;
